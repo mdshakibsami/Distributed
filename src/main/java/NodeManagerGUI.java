@@ -8,14 +8,16 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+
 import java.io.*;
 import java.util.*;
-
+import java.util.stream.Collectors;
 
 public class NodeManagerGUI extends Application {
-    private final MasterNode masterNode = new MasterNode(); // Connect MasterNode
+    private final MasterNode masterNode = new MasterNode();
     private final ListView<String> workerListView = new ListView<>();
     private final TextArea statusTextArea = new TextArea();
+    private List<Integer> data;
 
     public static void main(String[] args) {
         launch(args);
@@ -25,7 +27,6 @@ public class NodeManagerGUI extends Application {
     public void start(Stage primaryStage) {
         primaryStage.setTitle("Distributed Sorting System");
 
-        // Start MasterNode in a separate thread
         new Thread(masterNode).start();
 
         Button uploadButton = new Button("Upload File");
@@ -47,7 +48,6 @@ public class NodeManagerGUI extends Application {
         primaryStage.setScene(scene);
         primaryStage.show();
 
-        // Auto-refresh worker list periodically
         refreshWorkerList();
     }
 
@@ -57,21 +57,46 @@ public class NodeManagerGUI extends Application {
 
         File file = fileChooser.showOpenDialog(primaryStage);
         if (file != null) {
-            statusTextArea.appendText("File uploaded: " + file.getName() + "\n");
+            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+                data = reader.lines()
+                        .flatMap(line -> Arrays.stream(line.split("\\s+")))
+                        .map(Integer::parseInt)
+                        .collect(Collectors.toList());
+                statusTextArea.appendText("File uploaded: " + file.getName() + "\n");
+            } catch (IOException e) {
+                statusTextArea.appendText("Error reading file: " + e.getMessage() + "\n");
+            }
         } else {
             statusTextArea.appendText("No file selected.\n");
         }
     }
 
     private void triggerSort() {
-        List<Integer> data = Arrays.asList(5, 3, 8, 6, 2); // Replace with actual file data
-        masterNode.triggerSort(data);
-        statusTextArea.appendText("Sort triggered.\n");
+        if (data == null || data.isEmpty()) {
+            statusTextArea.appendText("No data to sort. Please upload a file first.\n");
+            return;
+        }
+
+        try {
+            List<Integer> sortedData = masterNode.sortAndMergeData(data);
+            statusTextArea.appendText("Sorted Data: " + sortedData + "\n");
+
+            // Write to output file
+            File outputFile = new File("sorted_result.txt");
+            try (PrintWriter writer = new PrintWriter(outputFile)) {
+                for (int num : sortedData) {
+                    writer.println(num);
+                }
+            }
+            statusTextArea.appendText("Result written to: " + outputFile.getAbsolutePath() + "\n");
+        } catch (Exception e) {
+            statusTextArea.appendText("Error during sorting: " + e.getMessage() + "\n");
+        }
     }
 
     private void refreshWorkerList() {
         List<String> workerIPs = masterNode.getWorkerIPs();
-        workerListView.getItems().setAll(workerIPs);
+        Platform.runLater(() -> workerListView.getItems().setAll(workerIPs));
         statusTextArea.appendText("Worker list refreshed.\n");
     }
 }

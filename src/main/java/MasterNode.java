@@ -1,15 +1,13 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 public class MasterNode implements Runnable {
-    private static final int PORT = 5000; // Port for worker connections
-    private static final List<Socket> workerSockets = new ArrayList<>();
-    private static final List<int[]> chunks = new ArrayList<>();
-    private static final List<Integer> sortedData = new ArrayList<>();
-    private volatile boolean sortTriggered = false;
-    private final List<String> workerIPs = new ArrayList<>();
+    private static final int PORT = 5000;
+    private final List<Socket> workerSockets = new ArrayList<>();
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public static void main(String[] args) {
         MasterNode masterNode = new MasterNode();
@@ -18,20 +16,17 @@ public class MasterNode implements Runnable {
 
     @Override
     public void run() {
-        acceptWorkerConnections();
+        startServer();
     }
 
-    private void acceptWorkerConnections() {
+    private void startServer() {
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("Master Node is running... Waiting for workers to connect.");
+            System.out.println("Master Node is running on port " + PORT);
 
             while (true) {
                 Socket workerSocket = serverSocket.accept();
-                synchronized (workerSockets) {
-                    workerSockets.add(workerSocket);
-                    workerIPs.add(workerSocket.getInetAddress().getHostAddress());
-                    System.out.println("Worker connected: " + workerSocket.getInetAddress().getHostAddress());
-                }
+                workerSockets.add(workerSocket);
+                System.out.println("Worker connected: " + workerSocket.getInetAddress().getHostAddress());
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -39,72 +34,72 @@ public class MasterNode implements Runnable {
     }
 
     public List<String> getWorkerIPs() {
-        synchronized (workerIPs) {
-            return new ArrayList<>(workerIPs);
+        return workerSockets.stream()
+                .map(socket -> socket.getInetAddress().getHostAddress())
+                .collect(Collectors.toList());
+    }
+
+    public List<Integer> sortAndMergeData(List<Integer> data) {
+        if (workerSockets.isEmpty()) {
+            throw new IllegalStateException("No workers are connected.");
+        }
+
+        // Split data into chunks
+        int chunkSize = (int) Math.ceil((double) data.size() / workerSockets.size());
+        List<List<Integer>> chunks = new ArrayList<>();
+        for (int i = 0; i < data.size(); i += chunkSize) {
+            chunks.add(new ArrayList<>(data.subList(i, Math.min(i + chunkSize, data.size()))));  // Convert subList to ArrayList
+        }
+
+        // Send chunks to workers and collect results
+        List<Future<List<Integer>>> futures = new ArrayList<>();
+        for (int i = 0; i < chunks.size(); i++) {
+            final Socket workerSocket = workerSockets.get(i);
+            final List<Integer> chunk = chunks.get(i);
+            System.out.println("Sending chunk to worker " + (i + 1) + ": " + chunk);  // Log chunk being sent
+            futures.add(executor.submit(() -> processChunk(workerSocket, chunk)));
+        }
+
+        // Wait for results and merge sorted chunks
+        List<Integer> sortedData = new ArrayList<>();
+        for (Future<List<Integer>> future : futures) {
+            try {
+                sortedData.addAll(future.get());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                System.out.println("Sorting operation was interrupted.");
+                return Collections.emptyList();
+            } catch (ExecutionException e) {
+                System.out.println("An error occurred during sorting: " + e.getMessage());
+                e.printStackTrace();
+                return Collections.emptyList();
+            }
+        }
+
+        Collections.sort(sortedData);
+        System.out.println("Final sorted data: " + sortedData);  // Log the final sorted data
+        return sortedData;
+    }
+
+    private List<Integer> processChunk(Socket workerSocket, List<Integer> chunk) throws IOException, ClassNotFoundException {
+        try (ObjectOutputStream out = new ObjectOutputStream(workerSocket.getOutputStream());
+             ObjectInputStream in = new ObjectInputStream(workerSocket.getInputStream())) {
+
+            out.writeObject(chunk);
+            out.flush();
+
+            return (List<Integer>) in.readObject();
         }
     }
 
-    public void triggerSort(List<Integer> data) {
-        synchronized (this) {
-            if (workerSockets.isEmpty()) {
-                System.out.println("No workers connected to perform sorting.");
-                return;
+    public void sendEndOfStream() {
+        for (Socket workerSocket : workerSockets) {
+            try (ObjectOutputStream out = new ObjectOutputStream(workerSocket.getOutputStream())) {
+                out.writeObject(null);  // Send 'null' to signal end of processing
+                out.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-
-            // Split data into chunks
-            int chunkSize = data.size() / workerSockets.size();
-            for (int i = 0; i < workerSockets.size(); i++) {
-                int start = i * chunkSize;
-                int end = (i == workerSockets.size() - 1) ? data.size() : start + chunkSize;
-                chunks.add(data.subList(start, end).stream().mapToInt(Integer::intValue).toArray());
-            }
-
-            sortTriggered = true;
-            sortData();
         }
-    }
-
-    private void sortData() {
-        try {
-            long startTime = System.currentTimeMillis();
-
-            // Distribute chunks to workers
-            for (int i = 0; i < workerSockets.size(); i++) {
-                sendDataToWorker(workerSockets.get(i), chunks.get(i));
-            }
-
-            // Collect sorted chunks from workers
-            for (Socket workerSocket : workerSockets) {
-                sortedData.addAll(Arrays.asList(receiveDataFromWorker(workerSocket)));
-            }
-
-            // Merge sorted data
-            sortedData.sort(Integer::compareTo);
-            long endTime = System.currentTimeMillis();
-
-            System.out.println("Sorting completed in " + (endTime - startTime) + " ms");
-            displaySortedData();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void sendDataToWorker(Socket worker, int[] data) throws IOException {
-        ObjectOutputStream out = new ObjectOutputStream(worker.getOutputStream());
-        out.writeObject(data);
-        out.flush();
-    }
-
-    private Integer[] receiveDataFromWorker(Socket worker) throws IOException {
-        try (ObjectInputStream in = new ObjectInputStream(worker.getInputStream())) {
-            return (Integer[]) in.readObject();
-        } catch (ClassNotFoundException e) {
-            throw new IOException("Error receiving data from worker", e);
-        }
-    }
-
-    private void displaySortedData() {
-        System.out.println("Sorted Data:");
-        sortedData.forEach(num -> System.out.print(num + " "));
     }
 }
