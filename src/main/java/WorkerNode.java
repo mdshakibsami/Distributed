@@ -3,7 +3,7 @@ import java.net.*;
 import java.util.*;
 
 public class WorkerNode implements Runnable {
-    private static final String MASTER_IP = "192.168.0.107"; // Change to Master Node's IP
+    private static final String MASTER_IP = "192.168.126.197"; // Change to Master Node's IP
     private static final int PORT = 5000;
 
     public static void main(String[] args) {

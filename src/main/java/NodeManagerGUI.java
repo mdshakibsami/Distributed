@@ -30,15 +30,17 @@ public class NodeManagerGUI extends Application {
         new Thread(masterNode).start();
 
         Button uploadButton = new Button("Upload File");
-        Button sortButton = new Button("Sort Data");
+        Button sortSingleButton = new Button("Sort with Single Machine");
+        Button sortDistributedButton = new Button("Sort with Worker Nodes");
         Button refreshButton = new Button("Refresh Workers");
 
         uploadButton.setOnAction(e -> uploadFile(primaryStage));
-        sortButton.setOnAction(e -> triggerSort());
+        sortSingleButton.setOnAction(e -> triggerSortSingleMachine());
+        sortDistributedButton.setOnAction(e -> triggerSortDistributed());
         refreshButton.setOnAction(e -> refreshWorkerList());
 
         VBox centerBox = new VBox(10, new Label("Connected Workers:"), workerListView, new Label("Status:"), statusTextArea);
-        HBox buttonBox = new HBox(10, uploadButton, sortButton, refreshButton);
+        HBox buttonBox = new HBox(10, uploadButton, sortSingleButton, sortDistributedButton, refreshButton);
 
         BorderPane root = new BorderPane();
         root.setTop(buttonBox);
@@ -71,26 +73,57 @@ public class NodeManagerGUI extends Application {
         }
     }
 
-    private void triggerSort() {
+    private void triggerSortSingleMachine() {
         if (data == null || data.isEmpty()) {
             statusTextArea.appendText("No data to sort. Please upload a file first.\n");
             return;
         }
 
+        long startTime = System.currentTimeMillis();
+        List<Integer> sortedData = new SingleMachineSort().sort(data);
+        long endTime = System.currentTimeMillis();
+
+        statusTextArea.appendText("Sorted Data (Single Machine): " + sortedData + "\n");
+        statusTextArea.appendText("Time taken: " + (endTime - startTime) + " ms\n");
+
+        // Write to output file with exception handling
+        File outputFile = new File("single_machine_sorted_result.txt");
+        try (PrintWriter writer = new PrintWriter(outputFile)) {
+            for (int num : sortedData) {
+                writer.println(num);
+            }
+            statusTextArea.appendText("Result written to: " + outputFile.getAbsolutePath() + "\n");
+        } catch (FileNotFoundException e) {
+            statusTextArea.appendText("Error writing to file: " + e.getMessage() + "\n");
+        }
+    }
+
+    private void triggerSortDistributed() {
+        if (data == null || data.isEmpty()) {
+            statusTextArea.appendText("No data to sort. Please upload a file first.\n");
+            return;
+        }
+
+        long startTime = System.currentTimeMillis();
         try {
             List<Integer> sortedData = masterNode.sortAndMergeData(data);
-            statusTextArea.appendText("Sorted Data: " + sortedData + "\n");
+            long endTime = System.currentTimeMillis();
 
-            // Write to output file
-            File outputFile = new File("sorted_result.txt");
+            statusTextArea.appendText("Sorted Data (Distributed): " + sortedData + "\n");
+            statusTextArea.appendText("Time taken: " + (endTime - startTime) + " ms\n");
+
+            // Write to output file with exception handling
+            File outputFile = new File("distributed_sorted_result.txt");
             try (PrintWriter writer = new PrintWriter(outputFile)) {
                 for (int num : sortedData) {
                     writer.println(num);
                 }
+                statusTextArea.appendText("Result written to: " + outputFile.getAbsolutePath() + "\n");
+            } catch (FileNotFoundException e) {
+                statusTextArea.appendText("Error writing to file: " + e.getMessage() + "\n");
             }
-            statusTextArea.appendText("Result written to: " + outputFile.getAbsolutePath() + "\n");
         } catch (Exception e) {
-            statusTextArea.appendText("Error during sorting: " + e.getMessage() + "\n");
+            statusTextArea.appendText("Error during distributed sorting: " + e.getMessage() + "\n");
         }
     }
 
