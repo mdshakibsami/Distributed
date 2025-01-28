@@ -10,6 +10,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.*;
+import java.net.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -79,14 +80,16 @@ public class NodeManagerGUI extends Application {
             return;
         }
 
+        // Ensure fresh sorting, no cache from previous run
+        List<Integer> dataToSort = new ArrayList<>(data);
+
         long startTime = System.currentTimeMillis();
-        List<Integer> sortedData = new SingleMachineSort().sort(data);
+        List<Integer> sortedData = new SingleMachineSort().sort(dataToSort);
         long endTime = System.currentTimeMillis();
 
         statusTextArea.appendText("Sorted Data (Single Machine): " + sortedData + "\n");
         statusTextArea.appendText("Time taken: " + (endTime - startTime) + " ms\n");
 
-        // Write to output file with exception handling
         File outputFile = new File("single_machine_sorted_result.txt");
         try (PrintWriter writer = new PrintWriter(outputFile)) {
             for (int num : sortedData) {
@@ -104,15 +107,17 @@ public class NodeManagerGUI extends Application {
             return;
         }
 
+        // Ensure fresh sorting, no cache from previous run
+        List<Integer> dataToSort = new ArrayList<>(data);
+
         long startTime = System.currentTimeMillis();
         try {
-            List<Integer> sortedData = masterNode.sortAndMergeData(data);
+            List<Integer> sortedData = masterNode.sortAndMergeData(dataToSort);
             long endTime = System.currentTimeMillis();
 
             statusTextArea.appendText("Sorted Data (Distributed): " + sortedData + "\n");
             statusTextArea.appendText("Time taken: " + (endTime - startTime) + " ms\n");
 
-            // Write to output file with exception handling
             File outputFile = new File("distributed_sorted_result.txt");
             try (PrintWriter writer = new PrintWriter(outputFile)) {
                 for (int num : sortedData) {
@@ -128,8 +133,40 @@ public class NodeManagerGUI extends Application {
     }
 
     private void refreshWorkerList() {
+        // Clear the uploaded data
+        data = null;
+
+        // Clear the worker list
         List<String> workerIPs = masterNode.getWorkerIPs();
-        Platform.runLater(() -> workerListView.getItems().setAll(workerIPs));
+
+        // Clear the status text area
+        statusTextArea.clear();
+        statusTextArea.appendText("Refreshing worker list...\n");
+
+        // Check heartbeat status for each worker
+        for (String workerIP : workerIPs) {
+            new Thread(() -> {
+                boolean isOnline = checkWorkerHeartbeat(workerIP);
+                Platform.runLater(() -> {
+                    if (isOnline) {
+                        workerListView.getItems().add(workerIP + " (Online)");
+                    } else {
+                        workerListView.getItems().add(workerIP + " (Offline)");
+                    }
+                });
+            }).start();
+        }
+
+        // Add a message indicating that the refresh process has started
         statusTextArea.appendText("Worker list refreshed.\n");
+    }
+
+    private boolean checkWorkerHeartbeat(String workerIP) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(workerIP, 5000), 2000); // Timeout of 2 seconds
+            return true; // Worker is online
+        } catch (IOException e) {
+            return false; // Worker is offline
+        }
     }
 }

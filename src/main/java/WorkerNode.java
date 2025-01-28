@@ -22,26 +22,23 @@ public class WorkerNode implements Runnable {
     }
 
     private void processChunks(Socket socket) throws IOException, ClassNotFoundException {
-        ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
-        ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+        try (ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
 
-        while (true) {
-            try {
+            while (true) {
                 List<Integer> chunk = (List<Integer>) in.readObject();
                 if (chunk == null) {
-                    break; // Exit when master sends 'null'
+                    break; // End of stream
                 }
 
-                System.out.println("Worker received chunk: " + chunk);  // Log received chunk
-                Collections.sort(chunk);
-                System.out.println("Worker sorted chunk: " + chunk);  // Log sorted chunk
+                List<Integer> sortedChunk = new ArrayList<>(chunk);
+                Collections.sort(sortedChunk); // Sort the chunk
 
-                out.writeObject(chunk);
+                out.writeObject(sortedChunk); // Send sorted chunk back to master
                 out.flush();
-            } catch (EOFException e) {
-                System.out.println("End of stream reached, worker exiting.");
-                break;
             }
+        } catch (EOFException e) {
+            System.out.println("Master Node closed connection.");
         }
     }
 }
